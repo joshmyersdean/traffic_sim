@@ -2,6 +2,29 @@
 
 Final project for Decision Making Under Uncertainty at CU Boulder Spring 2025
 
+## Michael's Additions- What I have so far:  
+This is a simulation of the traffic intersection which can be viewed by running the code. 
+I decided to do this in Python as I find it easier to work with- I think this should be fine for the project but let me know if there is a major issue with 
+using Python over Julia.
+
+Run by doing: 
+python main.py
+
+It's a 5 lane intersection. For each direction, there is a left turn lane (the lane in the middle), a straight lane, and a right turn lane (both to the right of the
+left turn lane). Additionally, there is two more lanes for the opposite direction of travel. 
+
+The traffic flow is currently random, but it would be interesting to add another traffic flow that changes with the timestep (to replicate rush hour traffic).
+The speeds of the cars probably needs to be changed. 
+
+If you run the file, it will just run a model that changes the traffic light on a fixed interval - this can be our baseline to beat. 
+If you uncomment some of the code in main.main(), you will see the neural network that is designed to control the traffic lights. 
+This needs major tuning - I'll continue to work on this. 
+
+Another thing I added was collisions. I noticed in the simulations that the lights would change so fast it would cause the cars to crash, so I figure it's important
+to include in the neural network as a heavy negative reward. If you run either model, you'll see the collisions printed out in chat when they occur. 
+
+Everything should be working, but I'll have to look over the neural network with fresh eyes to see if there are no major errors with the logic inside it. 
+
 ## About the model
 
 ### The State Space
