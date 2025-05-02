@@ -58,7 +58,7 @@ m = QuickMDP(
         :left_from_west
     ],
     discount = 0.95,
-    intialstate = initial_state_example,
+    intialstate = Deterministic(initial_state_example),
 
     gen = function (s, a, rng)
         # if the light state changes, update the state for the new light state
