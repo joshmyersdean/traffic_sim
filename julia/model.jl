@@ -1,6 +1,8 @@
 using POMDPs
 import QuickPOMDPs: QuickMDP
 using POMDPModelTools
+using POMDPTools
+using DataFrames
 
 S_TO_IDX = Dict(
     :SN => 1,
@@ -23,7 +25,7 @@ struct IntersectionState
 end
 
 initial_state_example = IntersectionState(
-    [1,1,1,1,1,1,1,1,1,1,1,1], 
+    fill(3, 12), 
     :off
 )
 
@@ -45,7 +47,7 @@ m = QuickMDP(
         # if the light state changes, update the state for the new light state
         # and return without reward
         if a !=  s.light_state
-            sp.light_state = a
+            sp = IntersectionState(s.car_queue, a)
             return (sp=sp, r=0)
         end
 
@@ -56,27 +58,27 @@ m = QuickMDP(
         if a == :north_south_straight
             state_delta = [
                 # SN - (priority) send car straight S->N
-                (s.car_quque[S_TO_IDX[:SN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SN]] > 0) ? 1 : 0,
                 # SW - (conditional) send car left turn S->W iff N->S and N->W are 0
-                (s.car_quque[S_TO_IDX[:SW]] > 0 && s.car_quque[S_TO_IDX[:NS]] == 0 && s.car_quque[S_TO_IDX[:NW]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SW]] > 0 && s.car_queue[S_TO_IDX[:NS]] == 0 && s.car_queue[S_TO_IDX[:NW]] == 0) ? 1 : 0,
                 # SE - (priority) send car right S->E
-                (s.car_quque[S_TO_IDX[:SE]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0) ? 1 : 0,
                 # NS - (priority) send car straight N->S
-                (s.car_quque[S_TO_IDX[:NS]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NS]] > 0) ? 1 : 0,
                 # NE - (conditional) send car left turn N->E iff S->N and S->E are 0
-                (s.car_quque[S_TO_IDX[:NE]] > 0 && s.car_quque[S_TO_IDX[:SN]] == 0 && s.car_quque[S_TO_IDX[:SE]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NE]] > 0 && s.car_queue[S_TO_IDX[:SN]] == 0 && s.car_queue[S_TO_IDX[:SE]] == 0) ? 1 : 0,
                 # NW - (priority) send car right turn N->W
-                (s.car_quque[S_TO_IDX[:NW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0) ? 1 : 0,
                 # WE - (never)
                 0,
                 # WN - (never)
                 0,
                 # WS - (conditional) send car right turn W->S iff N->S is 0
-                (s.car_quque[S_TO_IDX[:WS]] > 0 && s.car_quque[S_TO_IDX[:NS]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0 && s.car_queue[S_TO_IDX[:NS]] == 0) ? 1 : 0,
                 # EW - (never)
                 0,
                 # EN - (conditional) send car right turn E->N iff S->N is 0
-                (s.car_quque[S_TO_IDX[:EN]] > 0 && s.car_quque[S_TO_IDX[:SN]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0 && s.car_queue[S_TO_IDX[:SN]] == 0) ? 1 : 0,
                 # ES - (never)
                 0
             ]
@@ -89,25 +91,25 @@ m = QuickMDP(
                 # SW (never)
                 0,
                 # SE - (conditional) right turn S->E iff W->E is 0
-                (s.car_quque[S_TO_IDX[:SE]] > 0 && s.car_quque[S_TO_IDX[:WE]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0 && s.car_queue[S_TO_IDX[:WE]] == 0) ? 1 : 0,
                 # NS - (never)
                 0,
                 # NE - (never)
                 0,
                 # NW - (conditional) send car right turn N->W if E->W is 0
-                (s.car_quque[S_TO_IDX[:NW]] > 0 && s.car_quque[S_TO_IDX[:EW]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0 && s.car_queue[S_TO_IDX[:EW]] == 0) ? 1 : 0,
                 # WE - (priority) send car straight W->E
-                1,
+                (s.car_queue[S_TO_IDX[:WE]] > 0) ? 1 : 0,
                 # WN - send car left turn W->N if E->W and E->N are 0
-                (s.car_quque[S_TO_IDX[:WN]] > 0 && s.car_quque[S_TO_IDX[:EW]] == 0 && s.car_quque[S_TO_IDX[:EN]] == 0) ? 1 : 0, 
+                (s.car_queue[S_TO_IDX[:WN]] > 0 && s.car_queue[S_TO_IDX[:EW]] == 0 && s.car_queue[S_TO_IDX[:EN]] == 0) ? 1 : 0, 
                 # WS - (priority) send car right turn W->S
-                (s.car_quque[S_TO_IDX[:WS]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0) ? 1 : 0,
                 # EW - (priority) send car straight E->W
-                (s.car_quque[S_TO_IDX[:EW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EW]] > 0) ? 1 : 0,
                 # EN - (priority) send car right turn E->N
-                (s.car_quque[S_TO_IDX[:EN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0) ? 1 : 0,
                 # ES - (conditional) send car left turn E->S if W->E and W->S are 0
-                (s.car_quque[S_TO_IDX[:ES]] > 0 && s.car_quque[S_TO_IDX[:WE]] == 0 && s.car_quque[S_TO_IDX[:WS]] == 0) ? 1 : 0, # 
+                (s.car_queue[S_TO_IDX[:ES]] > 0 && s.car_queue[S_TO_IDX[:WE]] == 0 && s.car_queue[S_TO_IDX[:WS]] == 0) ? 1 : 0, # 
             ]
         elseif a == :left_from_north
             state_delta = [
@@ -116,23 +118,23 @@ m = QuickMDP(
                 # SW - (never)
                 0,
                 # SE - (conditional) right turn if no left turn conflict
-                (s.car_quque[S_TO_IDX[:SE]] > 0 && s.car_quque[S_TO_IDX[:NE]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0 && s.car_queue[S_TO_IDX[:NE]] == 0) ? 1 : 0,
                 # NS - (priority)
-                (s.car_quque[S_TO_IDX[:NS]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NS]] > 0) ? 1 : 0,
                 # NE - (priority)
-                (s.car_quque[S_TO_IDX[:NE]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NE]] > 0) ? 1 : 0,
                 # NW - (priority)
-                (s.car_quque[S_TO_IDX[:NW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0) ? 1 : 0,
                 # WE - (never)
                 0,
                 # WN - (never)
                 0,
                 # WS - (conditional) right turn if no straight conflict
-                (s.car_quque[S_TO_IDX[:WS]] > 0 && s.car_quque[S_TO_IDX[:NS]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0 && s.car_queue[S_TO_IDX[:NS]] == 0) ? 1 : 0,
                 # EW - (never)
                 0,
                 # EN - (priority)
-                (s.car_quque[S_TO_IDX[:EN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0) ? 1 : 0,
                 # ES - (never)
                 0
             ]
@@ -140,27 +142,27 @@ m = QuickMDP(
         elseif a == :left_from_south
             state_delta = [
                 # SN - (priority)
-                (s.car_quque[S_TO_IDX[:SN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SN]] > 0) ? 1 : 0,
                 # SW - (priority)
-                (s.car_quque[S_TO_IDX[:SW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SW]] > 0) ? 1 : 0,
                 # SE - (priority)
-                (s.car_quque[S_TO_IDX[:SE]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0) ? 1 : 0,
                 # NS - (never)
                 0,
                 # NE - (never)
                 0,
                 # NW - (conditional) right turn if no left conflict
-                (s.car_quque[S_TO_IDX[:NW]] > 0 && s.car_quque[S_TO_IDX[:SW]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0 && s.car_queue[S_TO_IDX[:SW]] == 0) ? 1 : 0,
                 # WE - (never)
                 0,
                 # WN - (never)
                 0,
                 # WS - (priority)
-                (s.car_quque[S_TO_IDX[:WS]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0) ? 1 : 0,
                 # EW - (never)
                 0,
                 # EN - (conditonal) right turn if no straight conflict
-                (s.car_quque[S_TO_IDX[:EN]] > 0 && s.car_quque[S_TO_IDX[:SN]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0 && s.car_queue[S_TO_IDX[:SN]] == 0) ? 1 : 0,
                 # ES - (never)
                 0
             ]
@@ -172,25 +174,25 @@ m = QuickMDP(
                 # SW - (never)
                 0,
                 # SE - (priority)
-                (s.car_quque[S_TO_IDX[:SE]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0) ? 1 : 0,
                 # NS - (never)
                 0,
                 # NE - (never)
                 0,
                 # NW - (conditional) right turn if no straight conflict
-                (s.car_quque[S_TO_IDX[:NW]] > 0 && s.car_quque[S_TO_IDX[:EW]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0 && s.car_queue[S_TO_IDX[:EW]] == 0) ? 1 : 0,
                 # WE - (never)
                 0,
                 # WN - (never)
                 0,
                 # WS - (conditional) right turn if no left conflict
-                (s.car_quque[S_TO_IDX[:WS]] > 0 && s.car_quque[S_TO_IDX[:ES]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0 && s.car_queue[S_TO_IDX[:ES]] == 0) ? 1 : 0,
                 # EW - (priority)
-                (s.car_quque[S_TO_IDX[:EW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EW]] > 0) ? 1 : 0,
                 # EN - (priority)
-                (s.car_quque[S_TO_IDX[:EN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0) ? 1 : 0,
                 # ES - (priority)
-                (s.car_quque[S_TO_IDX[:ES]] > 0) ? 1 : 0
+                (s.car_queue[S_TO_IDX[:ES]] > 0) ? 1 : 0
             ]
         elseif a == :left_from_west
             state_delta = [
@@ -199,23 +201,23 @@ m = QuickMDP(
                 # SW - (never)
                 0,
                 # SE - (conditional) right turn if no straight conflict
-                (s.car_quque[S_TO_IDX[:SE]] > 0 && s.car_quque[S_TO_IDX[:WE]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:SE]] > 0 && s.car_queue[S_TO_IDX[:WE]] == 0) ? 1 : 0,
                 # NS - (never)
                 0,
                 # NE - (never)
                 0,
                 # NW - (priority)
-                (s.car_quque[S_TO_IDX[:NW]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:NW]] > 0) ? 1 : 0,
                 # WE - (priority)
-                (s.car_quque[S_TO_IDX[:WE]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WE]] > 0) ? 1 : 0,
                 # WN - (priority)
-                (s.car_quque[S_TO_IDX[:WN]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WN]] > 0) ? 1 : 0,
                 # WS - (priority)
-                (s.car_quque[S_TO_IDX[:WS]] > 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:WS]] > 0) ? 1 : 0,
                 # EW - (never)
                 0,
                 # EN - (conditional) right turn if no left conflict
-                (s.car_quque[S_TO_IDX[:EN]] > 0 && s.car_quque[S_TO_IDX[:WN]] == 0) ? 1 : 0,
+                (s.car_queue[S_TO_IDX[:EN]] > 0 && s.car_queue[S_TO_IDX[:WN]] == 0) ? 1 : 0,
                 # ES - (never)
                 0
             ]
@@ -240,5 +242,41 @@ m = QuickMDP(
 
     # terminal state is no more cars left in any queue
     isterminal = s -> sum(s.car_queue) == 0,
-    statetype = IntersectionState,
+    statetype = IntersectionState
 )
+
+# policy = RandomPolicy(m)
+
+struct MyDeterministicPolicy <: Policy
+    # include parameters or mappings if needed
+end
+
+function POMDPs.action(policy::MyDeterministicPolicy, s)
+    # choose existing action 80% of the time; otherwise choose a random action
+    if rand() > 0.2
+        return s.light_state
+    else
+        return rand(actions(m))
+    end
+end
+
+policy = MyDeterministicPolicy()
+
+hr = HistoryRecorder(max_steps=100)
+history = simulate(hr, m, policy)
+# @show history
+
+function history_to_dataframe(history)
+    return DataFrame(
+        CarsState = [h[1].car_queue for h in history],
+        LightState = [h[1].light_state for h in history],
+        Action = [h[2] for h in history],
+        NextCarsState = [h[3].car_queue for h in history],
+        NextLightState = [h[3].light_state for h in history],
+        Reward = [h[4] for h in history],
+        TimeStep = [h[6] for h in history]
+    )
+end
+
+df = history_to_dataframe(history)
+show(df, allrows=true, allcols=true)
