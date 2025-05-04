@@ -79,7 +79,7 @@ def update_visualization(ax, scat, light_patches, active_cars, light_state, allo
     for d in config.directions:
         if d in allowed_dirs:
             if light_lane == 'left':
-                light_patches[d]['left'].set_color('orange')
+                light_patches[d]['left'].set_color('green')
                 light_patches[d]['straight'].set_color('red')
             else:
                 light_patches[d]['left'].set_color('red')

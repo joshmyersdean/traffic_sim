@@ -4,24 +4,46 @@ import torch.nn as nn
 import torch.optim as optim
 from collections import deque
 import random
+import itertools
+from collections import defaultdict
 
 class NeuralNetworkModel:
     def __init__(self, config):
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        self.reward_params = {
+            'collision_penalty_weight': -5,
+            'throughput_bonus_weight': 1.0,
+            'min_green_time': 5,
+            'duration_reward_decay': 1.0,
+            'active_queue_weight': 0.2,
+            'imbalance_penalty_weight': -0.1
+        }
+
         # Neural Network
-        self.state_size = len(config.directions) * len(config.spawn_lane_types)  # Queue lengths
-        self.action_size = 4  # NS-left, NS-straight, EW-left, EW-straight -> Each light
+        self.state_size = len(config.directions) * len(config.spawn_lane_types)
+        self.action_size = 4  # NS-left, NS-straight, EW-left, EW-straight
         self.model = self._build_model()
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         
-        # Tracking
-        self.car_positions = {}  
+        # Tracking and memory
         self.wait_times = {}     
         self.memory = deque(maxlen=2000)
         self.batch_size = 32
         self.gamma = 0.95
+
+        # Exploration parameters
+        self.epsilon = 1.0       # Initial exploration rate
+        self.epsilon_min = 0.01  # Minimum exploration rate
+        self.epsilon_decay = 0.995  # Decay rate per episode
+        self.exploration_decay_steps = 1000  # Steps before epsilon reaches min
+        self.steps_done = 0
+        
+        # To ensure the model doesn't switch lights too quickly
+        self.current_green_duration = 0
+        self.last_light_state = None
+        self.min_green_time = 5  # Minimum timesteps before switching
 
         self.episode_rewards = []
         self.episode_wait_times = []
@@ -36,19 +58,21 @@ class NeuralNetworkModel:
         ).to(self.device)
         return model
     
-    def get_state(self, queues):
-        """Convert queue lengths to state vector"""
-        state = []
-        for direction in self.config.directions:
-            for lane in self.config.spawn_lane_types:
-                state.append(len(queues[direction][lane]))
-        return torch.FloatTensor(state).to(self.device)
-    
     def get_light_state(self, time_step, queues):
         state = self.get_state(queues)
-        with torch.no_grad():
-            action_values = self.model(state)
-        action = torch.argmax(action_values).item()
+        
+        # Epsilon-greedy action selection
+        if random.random() < self.epsilon:
+            # Random action (exploration)
+            action = random.randint(0, self.action_size - 1)
+        else:
+            # Greedy action (exploitation)
+            with torch.no_grad():
+                action_values = self.model(state)
+            action = torch.argmax(action_values).item()
+        
+        # Update exploration rate
+        self._decay_epsilon()
         
         # Map action to light state
         if action == 0:
@@ -60,18 +84,30 @@ class NeuralNetworkModel:
         else:
             return ('EW', 'straight')
     
-    def update_car_positions(self, active_cars):
-        """Track all car positions for collision detection"""
-        self.car_positions = {id(car): car.position for car in active_cars}
+    def _decay_epsilon(self):
+        """Decay epsilon over time"""
+        self.steps_done += 1
+        # Linear decay
+        # self.epsilon = max(self.epsilon_min, 
+        #                  1.0 - (1.0 - self.epsilon_min) * 
+        #                  (self.steps_done / self.exploration_decay_steps))
+        
+        # Exponential decay
+        self.epsilon = max(self.epsilon_min, 
+                          self.epsilon * self.epsilon_decay)
     
-    def detect_collisions(self):
-        """Check for any cars too close to each other"""
-        positions = list(self.car_positions.values())
-        for i, pos1 in enumerate(positions):
-            for pos2 in positions[i+1:]:
-                if np.linalg.norm(pos1 - pos2) < 0.3:  # Collision threshold
-                    return True
-        return False
+    def reset_epsilon(self, value=1.0):
+        """Reset epsilon for new training runs"""
+        self.epsilon = value
+        self.steps_done = 0
+    
+    def get_state(self, queues):
+        """Convert queue lengths to state vector"""
+        state = []
+        for direction in self.config.directions:
+            for lane in self.config.spawn_lane_types:
+                state.append(len(queues[direction][lane]))
+        return torch.FloatTensor(state).to(self.device)
     
     def update_wait_times(self, queues, light_state, current_time):
         """Update wait times for all queued cars"""
@@ -101,42 +137,157 @@ class NeuralNetworkModel:
     
         except Exception as e:
             print(f"Error in update_wait_times: {e}")
-        
-    def calculate_reward(self, queues, light_state, active_cars=None):
-        """Calculate reward based on current state"""
+
+    def calculate_reward(self, queues, light_state, collision_detected=False, previous_queues=None):
+        # Use self.reward_params in your calculation
         try:
+            # Track light duration
+            if light_state == self.last_light_state:
+                self.current_green_duration += 1
+            else:
+                self.current_green_duration = 1
+            self.last_light_state = light_state
+
             # 1. Collision penalty
-            collision_penalty = -100 if self.detect_collisions() else 0
+            collision_penalty = self.reward_params['collision_penalty_weight'] if collision_detected else 0
             
-            # 2. Wait time penalty (only count cars still in queues)
-            current_wait_times = []
+            # 2. Queue-based rewards
+            direction_counts = {d: 0 for d in self.config.directions}
             for direction in self.config.directions:
                 for lane in self.config.spawn_lane_types:
-                    for car in queues[direction][lane]:
-                        car_id = id(car)
-                        if car_id in self.wait_times:
-                            current_wait_times.append(self.wait_times[car_id]['total_wait'])
+                    direction_counts[direction] += len(queues[direction][lane])
             
-            avg_wait = sum(current_wait_times) / max(1, len(current_wait_times))
-            wait_penalty = -avg_wait * 0.05
+            # 3. Active direction metrics
+            active_dir = light_state[0]
+            active_queue = direction_counts['N'] + direction_counts['S'] if active_dir == 'NS' else direction_counts['E'] + direction_counts['W']
+            inactive_queue = direction_counts['E'] + direction_counts['W'] if active_dir == 'NS' else direction_counts['N'] + direction_counts['S']
             
-            # 3. Throughput bonus (encourage clearing queues)
+            # 4. Throughput calculation
             throughput_bonus = 0
-            if active_cars is not None:
-                throughput_bonus = sum(1 for car in active_cars if car.finished) * 0.5
+            if previous_queues is not None:
+                exited = self.count_queue_exit(previous_queues, queues, light_state)
+                throughput_bonus = exited * self.reward_params['throughput_bonus_weight']
             
-            last_light_state = getattr(self, '_last_light_state', None)
-            light_change_reward = 0.01 if last_light_state and light_state != last_light_state else 0
-            self._last_light_state = light_state
+            # 5. Dynamic rewards based on duration
+            duration_reward = 0
+            if self.current_green_duration < self.reward_params['min_green_time']:
+                # Penalize switching too soon
+                duration_reward = -2.0
+            elif self.current_green_duration > self.reward_params['min_green_time']:
+                # Decaying reward for staying green
+                duration_reward = (active_queue * self.reward_params['active_queue_weight']) * \
+                                 (self.reward_params['duration_reward_decay'] ** (self.current_green_duration - self.reward_params['min_green_time']))
+            
+            # 6. Queue imbalance penalty
+            imbalance_penalty = self.reward_params['imbalance_penalty_weight'] * (inactive_queue - active_queue) if inactive_queue > active_queue else 0
+            
+            # Combined reward
+            reward = (
+                collision_penalty +
+                throughput_bonus +
+                duration_reward +
+                imbalance_penalty
+            )
+            
+            return reward, sum(direction_counts.values()) / len(direction_counts)
 
-            reward = collision_penalty + wait_penalty + throughput_bonus + light_change_reward
-            return reward, avg_wait
-    
         except KeyError as e:
             print(f"KeyError in calculate_reward: {e}")
-            print(f"Wait times structure: {self.wait_times}")
-            return 0  # Return neutral reward if error occurs
+            return 0, 0
+
+    def optimize_reward_parameters(simulation_class, config, traffic_generator, param_ranges, num_steps=1000, num_trials=3):
+        """
+        Optimize reward function parameters by testing different combinations.
         
+        Args:
+            simulation_class: The TrafficSimulation class to use
+            config: Configuration object
+            traffic_generator: Traffic generator instance
+            param_ranges: Dictionary of parameter names to ranges to test
+                Example: {
+                    'collision_penalty_weight': [-10, -5, -2],
+                    'throughput_bonus_weight': [0.5, 1.0, 2.0],
+                    ...
+                }
+            num_steps: Number of steps per simulation run
+            num_trials: Number of times to run each parameter combination (for averaging)
+        
+        Returns:
+            Dictionary of best parameters and their performance
+        """
+        # Generate all parameter combinations
+        param_names = sorted(param_ranges.keys())
+        param_values = [param_ranges[name] for name in param_names]
+        param_combinations = list(itertools.product(*param_values))
+        
+        best_params = None
+        best_score = float('inf')
+        results = []
+        
+        for i, combination in enumerate(param_combinations):
+            params = dict(zip(param_names, combination))
+            print(f"\nTesting combination {i+1}/{len(param_combinations)}: {params}")
+            
+            total_queues = defaultdict(list)
+            
+            # Run multiple trials for this parameter set
+            for trial in range(num_trials):
+                # Create model with current parameters
+                model = NeuralNetworkModel(config)
+                
+                # Update model's reward function parameters
+                model.calculate_reward = lambda *args, **kwargs: calculate_reward(
+                    model, *args, **params, **kwargs
+                )
+                
+                # Run simulation
+                sim = simulation_class(model, traffic_generator, config)
+                sim.run_headless(num_steps)
+                
+                # Get final queue lengths
+                final_queues = {}
+                for direction in config.directions:
+                    for lane in config.spawn_lane_types:
+                        queue_len = len(sim.queues[direction][lane])
+                        total_queues[direction].append(queue_len)
+                
+                # Calculate score (max queue length across all directions/lanes)
+                max_queue = max([len(q) for direction in sim.queues.values() 
+                            for q in direction.values()])
+                avg_queue = np.mean([len(q) for direction in sim.queues.values() 
+                                    for q in direction.values()])
+                std_queue = np.std([len(q) for direction in sim.queues.values() 
+                                for q in direction.values()])
+                
+                # We want to minimize both max queue and standard deviation
+                score = max_queue + std_queue
+                
+                if score < best_score:
+                    best_score = score
+                    best_params = params.copy()
+                    best_params['score'] = score
+                    best_params['max_queue'] = max_queue
+                    best_params['avg_queue'] = avg_queue
+                    best_params['std_queue'] = std_queue
+                
+                results.append({
+                    'params': params.copy(),
+                    'score': score,
+                    'max_queue': max_queue,
+                    'avg_queue': avg_queue,
+                    'std_queue': std_queue,
+                    'trial': trial
+                })
+        
+        print("\nOptimization complete!")
+        print(f"Best parameters: {best_params}")
+        print(f"Best score: {best_score:.2f}")
+        print(f"Max queue: {best_params['max_queue']}")
+        print(f"Avg queue: {best_params['avg_queue']:.2f}")
+        print(f"Queue std: {best_params['std_queue']:.2f}")
+        
+        return best_params, results
+
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
     
@@ -147,7 +298,7 @@ class NeuralNetworkModel:
         minibatch = random.sample(self.memory, self.batch_size)
         states = torch.stack([x[0] for x in minibatch]).to(self.device)
         actions = torch.tensor([x[1] for x in minibatch], dtype=torch.long).to(self.device)
-        rewards = torch.tensor([x[2] for x in minibatch], dtype=torch.float32).to(self.device).squeeze() # Ensure rewards is 1D
+        rewards = torch.tensor([x[2] for x in minibatch], dtype=torch.float32).to(self.device).squeeze()
         next_states = torch.stack([x[3] for x in minibatch]).to(self.device)
         dones = torch.tensor([x[4] for x in minibatch], dtype=torch.float32).to(self.device).squeeze()
 
@@ -186,3 +337,15 @@ class NeuralNetworkModel:
         
         except Exception as e:
             print(f"Error in cleanup_wait_times: {e}")
+
+    def count_queue_exit(self, queues_before, queues_after, light_state):
+        light_dir, _ = light_state
+        directions = ['N', 'S'] if light_dir == 'NS' else ['E', 'W']
+        exited = 0
+        for d in directions:
+            for lane in queues_before[d]:
+                before = len(queues_before[d][lane])
+                after = len(queues_after[d][lane])
+                if before > after:
+                    exited += before - after
+        return exited
