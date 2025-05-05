@@ -30,6 +30,10 @@ class TrafficSimulation:
 
     def update(self, frame):
         self.time_step += 1
+        # Store the queues before processing
+        previous_queues = {d: {l: list(q) for l, q in direction_queues.items()} 
+                        for d, direction_queues in self.queues.items()}
+        
         self.traffic.spawn_cars(self.time_step, self.queues)
 
         collision_detected = self._check_collisions()
@@ -43,13 +47,17 @@ class TrafficSimulation:
         self._process_movements(light_state, allowed_dirs)
 
         if isinstance(self.model, NeuralNetworkModel):
-            self.model.update_car_positions(self.active_cars)
             self.model.update_wait_times(self.queues, light_state, self.time_step)
-            reward, avg_wait = self.model.calculate_reward(self.queues, light_state, self.active_cars) # Unpack the tuple
+            reward, avg_wait = self.model.calculate_reward(
+                self.queues, 
+                light_state, 
+                collision_detected,
+                previous_queues  # Pass the previous queues state
+            )
             next_state = self.model.get_state(self.queues)
             done = False
             self.model.remember(state, self._light_state_to_action(light_state),
-                                reward, next_state, done) # Pass only the reward
+                            reward, next_state, done)
             self.model.replay()
             self.model.cleanup_wait_times(self.active_cars, self.queues)
 
@@ -60,7 +68,7 @@ class TrafficSimulation:
                 self.time_step, self.config,
                 self.queues, self.text_counters 
             )
-    
+        
     def run(self):
         """Run with visualization"""
         self._init_visualization()
@@ -123,10 +131,10 @@ class TrafficSimulation:
                     
                     # Only consider it a collision if directions differ by more than 45 degrees
                     if angle_diff > 45:
-                        print(f"Collision detected at timestep {self.time_step}:")
-                        print(f"- Car from {car1.origin} moving {car1.cardinal_direction} at {car1.position}")
-                        print(f"- Car from {car2.origin} moving {car2.cardinal_direction} at {car2.position}")
-                        print(f"Distance: {distance:.2f}, Angle difference: {angle_diff:.1f}°")
+                        #print(f"Collision detected at timestep {self.time_step}:")
+                        #print(f"- Car from {car1.origin} moving {car1.cardinal_direction} at {car1.position}")
+                        #print(f"- Car from {car2.origin} moving {car2.cardinal_direction} at {car2.position}")
+                        #print(f"Distance: {distance:.2f}, Angle difference: {angle_diff:.1f}°")
                         self.collision_count += 1
                         collision_detected = True
                         
