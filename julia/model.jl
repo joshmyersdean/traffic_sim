@@ -1,6 +1,7 @@
+module IntersectionModel
+
 using POMDPs
-import QuickPOMDPs: QuickMDP
-using POMDPModelTools
+using QuickPOMDPs
 using POMDPTools
 using DataFrames
 
@@ -24,8 +25,8 @@ struct IntersectionState
     light_state::Symbol
 end
 
-initial_state_example = IntersectionState(
-    fill(3, 12), 
+default_initial_state = IntersectionState(
+    fill(1, 12), 
     :off
 )
 
@@ -39,16 +40,17 @@ m = QuickMDP(
         :left_from_west
     ],
     discount = 0.95,
-    initialstate = Deterministic(initial_state_example),
+    initialstate = Deterministic(default_initial_state),
 
     gen = function (s, a, rng)
+        step_reward = -0.1
         sp = deepcopy(s)
 
         # if the light state changes, update the state for the new light state
         # and return without reward
         if a !=  s.light_state
             sp = IntersectionState(s.car_queue, a)
-            return (sp=sp, r=0)
+            return (sp=sp, r=step_reward)
         end
 
         s_cars = s.car_queue
@@ -223,13 +225,12 @@ m = QuickMDP(
             ]
 
         else # this should never happen, off state maybe, so provide no reward
-            return (sp=s, r=0)
+            return (sp=s, r=step_reward)
         end
 
         # this is broken out as a loop in case we want more complex reward logic.
         # For example, if we pass too much from one intersection, the other intersection
         # will have to wait a long time. A decaying reward may be necessary.
-        step_reward= 0 # (throughput)
         for i in 1:12
             step_reward += state_delta[i]
         end
@@ -245,38 +246,6 @@ m = QuickMDP(
     statetype = IntersectionState
 )
 
-# policy = RandomPolicy(m)
+export IntersectionState, m
 
-struct MyDeterministicPolicy <: Policy
-    # include parameters or mappings if needed
 end
-
-function POMDPs.action(policy::MyDeterministicPolicy, s)
-    # choose existing action 80% of the time; otherwise choose a random action
-    if rand() > 0.2
-        return s.light_state
-    else
-        return rand(actions(m))
-    end
-end
-
-policy = MyDeterministicPolicy()
-
-hr = HistoryRecorder(max_steps=100)
-history = simulate(hr, m, policy)
-# @show history
-
-function history_to_dataframe(history)
-    return DataFrame(
-        CarsState = [h[1].car_queue for h in history],
-        LightState = [h[1].light_state for h in history],
-        Action = [h[2] for h in history],
-        NextCarsState = [h[3].car_queue for h in history],
-        NextLightState = [h[3].light_state for h in history],
-        Reward = [h[4] for h in history],
-        TimeStep = [h[6] for h in history]
-    )
-end
-
-df = history_to_dataframe(history)
-show(df, allrows=true, allcols=true)
