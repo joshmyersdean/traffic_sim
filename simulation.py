@@ -22,6 +22,8 @@ class TrafficSimulation:
         self.scat = None
         self.light_patches = None
 
+        self.cars_exited = 0
+
     def _init_visualization(self):
         """Initialize visualization components if not already initialized"""
         if not self._visualization_initialized:
@@ -113,8 +115,11 @@ class TrafficSimulation:
         remaining_cars = []
         for car in self.active_cars:
             car.move()
-            if not car.finished:
+            if car.finished:
+                self.cars_exited += 1
+            else: 
                 remaining_cars.append(car)
+                
         self.active_cars = remaining_cars
 
     def _check_collisions(self):

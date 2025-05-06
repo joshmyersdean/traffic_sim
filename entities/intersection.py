@@ -1,8 +1,8 @@
 class IntersectionConfig:
     def __init__(self):
         # Simulation parameters
-        self.car_speed = 0.85
-        self.collision_threshold = 0.3 
+        self.car_speed = 1.0 # Adjust this to change the speed of the cars
+        self.collision_threshold = 0.3 # Distance threshold for collision detection (ie: number of units that are close enough to be considered a collision)
         self.collision_cooldown = 5  # timesteps to ignore same collision
 
         # Lane positions for each direction (x, y coordinates)

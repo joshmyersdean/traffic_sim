@@ -33,7 +33,7 @@ class NeuralNetworkModel:
         self.batch_size = 32
         self.gamma = 0.95
 
-        # Exploration parameters
+        # Exploration parameters - uses greedy epsilon. This was not tuned extensively 
         self.epsilon = 1.0       # Initial exploration rate
         self.epsilon_min = 0.01  # Minimum exploration rate
         self.epsilon_decay = 0.995  # Decay rate per episode
@@ -63,10 +63,8 @@ class NeuralNetworkModel:
         
         # Epsilon-greedy action selection
         if random.random() < self.epsilon:
-            # Random action (exploration)
             action = random.randint(0, self.action_size - 1)
         else:
-            # Greedy action (exploitation)
             with torch.no_grad():
                 action_values = self.model(state)
             action = torch.argmax(action_values).item()
@@ -87,12 +85,6 @@ class NeuralNetworkModel:
     def _decay_epsilon(self):
         """Decay epsilon over time"""
         self.steps_done += 1
-        # Linear decay
-        # self.epsilon = max(self.epsilon_min, 
-        #                  1.0 - (1.0 - self.epsilon_min) * 
-        #                  (self.steps_done / self.exploration_decay_steps))
-        
-        # Exponential decay
         self.epsilon = max(self.epsilon_min, 
                           self.epsilon * self.epsilon_decay)
     
@@ -139,7 +131,6 @@ class NeuralNetworkModel:
             print(f"Error in update_wait_times: {e}")
 
     def calculate_reward(self, queues, light_state, collision_detected=False, previous_queues=None):
-        # Use self.reward_params in your calculation
         try:
             # Track light duration
             if light_state == self.last_light_state:
@@ -195,99 +186,6 @@ class NeuralNetworkModel:
             print(f"KeyError in calculate_reward: {e}")
             return 0, 0
 
-    def optimize_reward_parameters(simulation_class, config, traffic_generator, param_ranges, num_steps=1000, num_trials=3):
-        """
-        Optimize reward function parameters by testing different combinations.
-        
-        Args:
-            simulation_class: The TrafficSimulation class to use
-            config: Configuration object
-            traffic_generator: Traffic generator instance
-            param_ranges: Dictionary of parameter names to ranges to test
-                Example: {
-                    'collision_penalty_weight': [-10, -5, -2],
-                    'throughput_bonus_weight': [0.5, 1.0, 2.0],
-                    ...
-                }
-            num_steps: Number of steps per simulation run
-            num_trials: Number of times to run each parameter combination (for averaging)
-        
-        Returns:
-            Dictionary of best parameters and their performance
-        """
-        # Generate all parameter combinations
-        param_names = sorted(param_ranges.keys())
-        param_values = [param_ranges[name] for name in param_names]
-        param_combinations = list(itertools.product(*param_values))
-        
-        best_params = None
-        best_score = float('inf')
-        results = []
-        
-        for i, combination in enumerate(param_combinations):
-            params = dict(zip(param_names, combination))
-            print(f"\nTesting combination {i+1}/{len(param_combinations)}: {params}")
-            
-            total_queues = defaultdict(list)
-            
-            # Run multiple trials for this parameter set
-            for trial in range(num_trials):
-                # Create model with current parameters
-                model = NeuralNetworkModel(config)
-                
-                # Update model's reward function parameters
-                model.calculate_reward = lambda *args, **kwargs: calculate_reward(
-                    model, *args, **params, **kwargs
-                )
-                
-                # Run simulation
-                sim = simulation_class(model, traffic_generator, config)
-                sim.run_headless(num_steps)
-                
-                # Get final queue lengths
-                final_queues = {}
-                for direction in config.directions:
-                    for lane in config.spawn_lane_types:
-                        queue_len = len(sim.queues[direction][lane])
-                        total_queues[direction].append(queue_len)
-                
-                # Calculate score (max queue length across all directions/lanes)
-                max_queue = max([len(q) for direction in sim.queues.values() 
-                            for q in direction.values()])
-                avg_queue = np.mean([len(q) for direction in sim.queues.values() 
-                                    for q in direction.values()])
-                std_queue = np.std([len(q) for direction in sim.queues.values() 
-                                for q in direction.values()])
-                
-                # We want to minimize both max queue and standard deviation
-                score = max_queue + std_queue
-                
-                if score < best_score:
-                    best_score = score
-                    best_params = params.copy()
-                    best_params['score'] = score
-                    best_params['max_queue'] = max_queue
-                    best_params['avg_queue'] = avg_queue
-                    best_params['std_queue'] = std_queue
-                
-                results.append({
-                    'params': params.copy(),
-                    'score': score,
-                    'max_queue': max_queue,
-                    'avg_queue': avg_queue,
-                    'std_queue': std_queue,
-                    'trial': trial
-                })
-        
-        print("\nOptimization complete!")
-        print(f"Best parameters: {best_params}")
-        print(f"Best score: {best_score:.2f}")
-        print(f"Max queue: {best_params['max_queue']}")
-        print(f"Avg queue: {best_params['avg_queue']:.2f}")
-        print(f"Queue std: {best_params['std_queue']:.2f}")
-        
-        return best_params, results
-
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
     
@@ -326,7 +224,6 @@ class NeuralNetworkModel:
             cleaned_wait_times = {}
             for car_id, wait_data in self.wait_times.items():
                 if car_id in active_ids:
-                    # Ensure the structure is correct
                     cleaned_wait_times[car_id] = {
                         'first_seen': wait_data.get('first_seen', 0),
                         'last_moved': wait_data.get('last_moved', 0),
